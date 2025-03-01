@@ -133,7 +133,7 @@ class AbstractEnv(gym.Env):
             "offscreen_rendering": os.environ.get("OFFSCREEN_RENDERING", "0") == "1",
             "manual_control": False,
             "real_time_rendering": False,
-            "use_history": True
+            "use_history": False
         }
 
     def configure(self, config: dict) -> None:
