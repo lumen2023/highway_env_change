@@ -6,7 +6,6 @@ from gymnasium import Wrapper
 from gymnasium.wrappers import RecordVideo
 from gymnasium.utils import seeding
 import numpy as np
-from collections import deque
 
 from highway_env import utils
 from highway_env.envs.common.action import action_factory, Action, DiscreteMetaAction, ActionType
@@ -16,7 +15,6 @@ from highway_env.envs.common.graphics import EnvViewer
 from highway_env.envs.common.risk_field import initialize_plot, Risk_field
 from highway_env.vehicle.behavior import IDMVehicle, LinearVehicle
 from highway_env.vehicle.controller import MDPVehicle
-from highway_env.vehicle.controller import LYZ_MDPVehicle
 from highway_env.vehicle.kinematics import Vehicle
 from highway_env.envs.common.mpc_controller2 import MPC
 import casadi as ca
@@ -50,14 +48,6 @@ class AbstractEnv(gym.Env):
         self.config = self.default_config()
         self.configure(config)
 
-        # 历史记录
-        history_len = self.config["history_len"]
-        # 保存过去5帧的状态信息
-        self.history = deque(maxlen=history_len) # LYZ-history
-
-        self.is_first_step = True  # 标记是否是第一个时间步
-        self.time = 0
-
         # Scene
         self.road = None
         self.controlled_vehicles = []
@@ -88,7 +78,7 @@ class AbstractEnv(gym.Env):
         self.risk_field = Risk_field()
         self.x0 = np.array([self.vehicle.position[0],self.vehicle.position[1],self.vehicle.speed,self.vehicle.heading]).reshape(-1, 1)
         self.u0 = np.array([0, 0]*self.mpc_controller.N).reshape(-1, 2)
-        self.previous_steering_angle = 0
+
 
     @property
     def vehicle(self) -> Vehicle:
@@ -116,11 +106,8 @@ class AbstractEnv(gym.Env):
                 "type": "DiscreteMetaAction"
             },
             "simulation_frequency": 15,  # [Hz]
-            "policy_frequency": 1,  # [Hz]IDVehicle
+            "policy_frequency": 1,  # [Hz]
             "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
-            "other_vehicles_type1": "highway_env.vehicle.behavior.AggressiveVehicle", # 1是激进风格
-            "other_vehicles_type2": "highway_env.vehicle.behavior.DefensiveVehicle", # 2是 passive风格
-            "other_vehicles_type3": "highway_env.vehicle.behavior.IDVehicle", # 3是 无避让风格
             # "screen_width": 600,  # [px]
             # "screen_height": 150,  # [px]
             "screen_width": 1800,  # [px]
@@ -128,16 +115,11 @@ class AbstractEnv(gym.Env):
             # "centering_position": [0.3, 0.5],
             "centering_position": [0.6, 0.5],
             "scaling": 5.5,
-            "usempc_controller": False,
             "show_trajectories": False,
             "render_agent": True,
             "offscreen_rendering": os.environ.get("OFFSCREEN_RENDERING", "0") == "1",
             "manual_control": False,
-            "real_time_rendering": False,
-            # "use_history": False,
-            "use_history": True,
-            "history_len": 15,
-            "num_samples": 3
+            "real_time_rendering": False
         }
 
     def configure(self, config: dict) -> None:
@@ -155,23 +137,7 @@ class AbstractEnv(gym.Env):
         """
         self.observation_type = observation_factory(self, self.config["observation"])
         self.action_type = action_factory(self, self.config["action"])
-
-        # 获取单帧 observation space
-        single_frame_obs_space = self.observation_type.space()
-        single_frame_size = np.prod(single_frame_obs_space.shape)  # 计算单帧观测的总大小 (30,)
-
-        if self.config["use_history"]:
-            history_len = self.config["num_samples"]  # 需要的历史帧数 (3)
-
-            # 适配历史观测的空间，使其变成 (90,)
-            self.observation_space = gym.spaces.Box(
-                low=np.tile(single_frame_obs_space.low, history_len),  # 低值扩展到 (90,)
-                high=np.tile(single_frame_obs_space.high, history_len),  # 高值扩展到 (90,)
-                dtype=single_frame_obs_space.dtype
-            )
-        else:
-            self.observation_space = single_frame_obs_space  # 仍然是 (30,)
-
+        self.observation_space = self.observation_type.space()
         self.action_space = self.action_type.space()
 
     def _reward(self, action: Action) -> float:
@@ -221,14 +187,13 @@ class AbstractEnv(gym.Env):
         """
         info = {
             "crashed": self.vehicle.crashed,
-            "on_road": self.vehicle.on_road,
             "action": action,
             # "cost": 5 * float(self.vehicle.crashed) +
             #         0.05 * np.clip(utils.lmap(self.vehicle.speed * np.cos(self.vehicle.heading), self.config["cost_speed_range"], [0, 1]), 0, 1)
             # "cost": 5 * float(self.vehicle.crashed) + 5 * float(not self.vehicle.on_road)
             #         + self._compute_headway_cost_ego(self.vehicle),
             "cost": 5 * float(self.vehicle.crashed) + 5 * float(not self.vehicle.on_road)
-                    + min(self._cost(),3),
+                    + self._cost(),
             "time": self.time,
             "position": self.vehicle.position,
             "speed": self.vehicle.speed,
@@ -236,8 +201,6 @@ class AbstractEnv(gym.Env):
             "acceleration": self.vehicle.action['acceleration'],
             "steering": self.vehicle.action['steering'],
         }
-        # if info["cost"] > 1:
-        #     print("***\n","风险场代价self._cost() : ",self._cost(),"***\n")
         try:
             info["rewards"] = self._rewards(action),
             # info["follow_speed"] = self._follow_car_speed(),
@@ -256,9 +219,6 @@ class AbstractEnv(gym.Env):
         :param options: Allows the environment configuration to specified through `options["config"]`
         :return: the observation of the reset state
         """
-        self.time = 0
-        self.is_first_step = True  # 重新开始回合时，设置为第一步
-
         super().reset(seed=seed, options=options)
         if options and "config" in options:
             self.configure(options["config"])
@@ -270,16 +230,6 @@ class AbstractEnv(gym.Env):
         self.define_spaces()  # Second, to link the obs and actions to the vehicles once the scene is created
         obs = self.observation_type.observe()
         info = self._info(obs, action=self.action_space.sample())
-        if self.config['use_history']:
-            # 清空历史记录
-            self.history.clear()
-            for _ in range(self.config['history_len']): # LYZ-history重复15次
-                self.history.append(obs)
-            print(" History !!! ")
-            # 如果已经保存了5帧数据，可以将它们作为当前的obs
-            # obs = np.array(list(self.history))
-            indices = np.linspace(0, self.config["history_len"] - 1, self.config["num_samples"], dtype=int)
-            obs = np.array([self.history[i] for i in indices]).ravel()  # 形状 (3, 30)
         if self.render_mode == 'human':
             self.render()
         return obs, info
@@ -304,8 +254,8 @@ class AbstractEnv(gym.Env):
         """
         if self.config['usempc_controller']:
             xs = action
-            y_ref = utils.lmap(xs[0], [-1, 1], [-2,14])
-            v_ref = utils.lmap(xs[1], [-1, 1], [15, 35])
+            y_ref = utils.lmap(xs[0], [-1, 1], [3,9])
+            v_ref = utils.lmap(xs[1], [-1, 1], [10, 30])
             xs = np.array([y_ref, v_ref]).reshape(-1, 1)
             init_control = ca.reshape(self.u0, -1, 1)
             c_p = np.concatenate((self.x0, xs))
@@ -318,40 +268,20 @@ class AbstractEnv(gym.Env):
             action = action.flatten()  # 这一步非常重要
         if self.road is None or self.vehicle is None:
             raise NotImplementedError("The road and vehicle must be initialized in the environment implementation")
-        # steering = self.steering_control()
-        # action = [self.a_ego_idm, self.s_ego_mobil]
+        steering = self.steering_control()
+        action = [self.a_ego_idm, self.s_ego_mobil]
         self.time += 1 / self.config["policy_frequency"]
         self._simulate(action)
         obs = self.observation_type.observe()
         reward = self._reward(action)
-        # cost = self._cost()
+        cost = self._cost()
         terminated = self._is_terminated()
         truncated = self._is_truncated()
         info = self._info(obs, action)
-        # 为了符合 is_first 的设计，首次调用时是 True，后续都为 False
-        info["is_first"] = self.is_first_step
-        # 第一次 step 后将 is_first 设置为 False
-        if self.is_first_step:
-            self.is_first_step = False
-
         if self.render_mode == 'human':
             self.render()
         done = terminated or truncated
-        # 标记当前回合已开始
-        done = terminated or truncated
-
-        # LYZ_history
-        if self.config["use_history"]:
-            # 将当前帧添加到历史记录中
-            self.history.append(obs)
-            # # 如果已经保存了5帧数据，可以将它们作为当前的obs
-            # obs = np.array(list(self.history)) # 将队列转化为单列列表输出
-            num_samples = self.config["num_samples"]
-            len = self.config["history_len"]
-            indices = np.linspace(0, len - 1, num_samples, dtype=int)
-            obs = np.array([self.history[i] for i in indices]).ravel()
-            # obs = obs.reshape(-1, )
-        # U_field, vehicles_obs, X, Y = self.plot_cost()
+        U_field, vehicles_obs, X, Y = self.plot_cost()
         # self.risk_field.update_plot(self.fig, self.ax, X, Y, U_field, vehicles_obs, done, self.time)
         return obs, reward, terminated, truncated, info
 
@@ -729,90 +659,6 @@ class AbstractEnv(gym.Env):
     #
     #     return U_field, vehicles_obs,  x_ego, y_ego
 
-    def _cost(self):
-        """
-        计算车辆行驶过程中的成本函数，该成本函数基于潜在场方法，用于路径规划和避障。
-
-        成本函数考虑了静态障碍物（其他车辆）、道路边界和车道线的潜在场影响，
-        以及车辆之间的动态相互作用，以计算总的成本（潜在能量）。
-
-        Returns:
-            float: 车辆行驶过程中的总成本（潜在能量）。
-        """
-        # 初始化潜在场强度系数
-        Asta = 1
-        Adyn = 1
-        Ab = 1  # 道路边界的场强系数
-        Al = 0.1  # 车道线的场强系数
-        σb = 1  # 道路边界的风风险分布范围
-        σl = 1  # 车道线的风险分布范围
-        kx = 1
-        ky = 0.8
-        kv = 2
-        alpha = 0.9
-        beta = 2
-        L_obs = 5
-        W_obs = 2
-
-        # 获取所有车辆的位置、速度和航向
-        positions = [vehicle.position for vehicle in self.road.vehicles]
-        speeds = [vehicle.speed for vehicle in self.road.vehicles]
-        headings = [vehicle.heading for vehicle in self.road.vehicles]
-        vehicles_obs = np.column_stack((np.array(positions), np.array(speeds), np.array(headings)))
-        x_ego, y_ego, v_ego, _ = vehicles_obs[0]
-
-        # 道路边界位置
-        y_boundary = [-2, 14]
-        # 车道线位置
-        y_lane = [2, 6, 10]
-
-        # 计算道路边界的潜在场
-        Eb = np.zeros_like(x_ego)
-        for boundary in y_boundary:
-            Eb += Ab * np.exp(-((y_ego - boundary) ** 2) / (1 * σb ** 2))
-
-        # 计算车道线的潜在场
-        El = np.zeros_like(x_ego)
-        for lane in y_lane:
-            El += Al * np.exp(-((y_ego - lane) ** 2) / (1 * σl ** 2))
-
-        Ustas = []
-        Udyns = []
-        # 计算与其他车辆的相互作用势场
-        for vehicle in vehicles_obs[1:]:
-            x_obs, y_obs, v_obs, h_obs = vehicle
-            σx = kx * L_obs
-            σy = ky * W_obs
-            σv = kv * np.abs(v_obs - v_ego)
-
-            # 计算相对速度方向
-            if v_obs >= v_ego:
-                relv = 1
-            else:
-                relv = -1
-
-            # 修正坐标旋转公式
-            h_obs = -h_obs  # 这一步非常重要，不然有航向角的障碍物的势场就反了
-            x_rel = (x_ego - x_obs) * np.cos(h_obs) - (y_ego - y_obs) * np.sin(h_obs) + x_obs
-            y_rel = (x_ego - x_obs) * np.sin(h_obs) + (y_ego - y_obs) * np.cos(h_obs) + y_obs
-
-            Usta = Asta * np.exp(
-                -((x_rel - x_obs) ** 2 / σx ** 2) ** beta - ((y_rel - y_obs) ** 2 / σy ** 2) ** beta)
-            Udyn = Adyn * (np.exp(-((x_rel - x_obs) ** 2 / σv ** 2 + (y_rel - y_obs) ** 2 / σy ** 2)) /
-                           (1 + np.exp(-relv * (x_rel - x_obs - alpha * L_obs * relv))))
-            Ustas.append(Usta)
-            Udyns.append(Udyn)
-
-        # 计算总的成本（潜在能量）
-        Ustas = np.array(Ustas).sum()
-        Udyns = np.array(Udyns).sum()
-        Ebs = Eb.sum()
-        Els = El.sum()
-        U = Ustas + Udyns + Ebs + Els
-        # U = Ustas + Udyns
-        return U
-
-
     def plot_cost(self):
         Asta = 1
         Adyn = 1
@@ -880,8 +726,7 @@ class AbstractEnv(gym.Env):
             U_field += Usta + Udyn
         U_field1 = U_field + Eb + El
         return U_field1, vehicles_obs,  x_ego, y_ego
-    
-    # 提取自车和其他车辆信息
+
     def find_surrounding_vehicles(self):
         # 提取自车和其他车辆信息
         positions = [vehicle.position for vehicle in self.road.vehicles]
@@ -958,8 +803,7 @@ class AbstractEnv(gym.Env):
         ])
 
         return surrounding_vehicles
-    
-    # 基于IDM模型计算出加速度
+
     def calculate_idm_acceleration(self, ego_vehicle, lead_vehicle):
         # 设定变量
         v0 = 30  # 期望速度 (m/s)
@@ -992,7 +836,6 @@ class AbstractEnv(gym.Env):
 
         return acceleration
 
-    # 基于IDM模型计算出加速度集合
     def calculate_all_accelerations(self):
         # surrounding_vehicles是一个7行6列的数组，
         # 第一行自车、第二行前车、第三行后车，
@@ -1132,83 +975,34 @@ class AbstractEnv(gym.Env):
         #       "right_advantage:", right_advantage, "\n",
         #       "best_direction:",  self.best_direction, "\n",
         #       )
-        return target_lane_index, a_e
+        return target_lane_index
 
-    # 转向控制函数，根据IDM和MOBIL模型进行车道变换决策，并计算合适的转向角度。
     def steering_control(self):
-        """
-        转向控制函数，根据IDM和MOBIL模型进行车道变换决策，并计算合适的转向角度。
-
-        参数:
-        self: 当前对象实例，包含车辆状态和其他相关信息。
-
-        返回:
-        float: 计算得到的转向角度（单位：弧度）。
-        """
-        LENGTH = 5  # 车辆长度 [m]
-        TAU_HEADING = 0.2  # 航向时间常数 [s]
-        TAU_LATERAL = 0.6  # 横向时间常数 [s]
-        KP_HEADING = 1 / TAU_HEADING  # 航向控制增益
-        KP_LATERAL = 1 / TAU_LATERAL  # 横向控制增益 [1/s]
-        MAX_STEERING_ANGLE = np.pi / 3  # 最大转向角度 [rad]
-        MAX_STEERING_RATE = np.pi / 18  # 最大转角变化率 [rad/s]，可以根据需要调整
-
-        # 根据MOBIL模型进行车道变换决策
-        target_lane_index, _ = self.mobil_lane_change_decision()
-
-        # 获取当前车辆的状态
+        LENGTH = 5  # [m]
+        TAU_HEADING = 0.2  # [s]
+        TAU_LATERAL = 0.6  # [s]
+        KP_HEADING = 1 / TAU_HEADING
+        KP_LATERAL = 1 / TAU_LATERAL  # [1/s]
+        MAX_STEERING_ANGLE = np.pi / 3  # [rad]
+        target_lane_index = self.mobil_lane_change_decision()
+        # print(target_lane_index)
         ego_x, ego_y, ego_v, ego_heading, ego_lane_index = self.ego_vehicle
-
-        # 计算目标车道的y坐标
         target_y = target_lane_index * 4
-
-        # 计算当前车辆与目标车道的横向偏差
         delta_y = ego_y - target_y
-        delta_y1 = 12 - ego_y
-        delta_y2 = 0 - ego_y
-
-        # 当前车辆在车道上的位置坐标
         lane_coords = [ego_x, delta_y]
-
-        # 横向位置控制
-        lateral_speed_command = -KP_LATERAL * lane_coords[1]
-
-        # 将横向速度转换为航向命令
+        # Lateral position control
+        lateral_speed_command = - KP_LATERAL * lane_coords[1]
+        # Lateral speed to heading
         heading_command = np.arcsin(np.clip(lateral_speed_command / utils.not_zero(ego_v), -1, 1))
-        heading_ref = np.clip(heading_command, -np.pi / 4, np.pi / 4)
-
-        # 航向控制
+        heading_ref = np.clip(heading_command, -np.pi/4, np.pi/4)
+        # Heading control
         heading_rate_command = KP_HEADING * utils.wrap_to_pi(heading_ref - ego_heading)
-
-        # 将航向变化率转换为转向角度
+        # Heading rate to steering angle
         slip_angle = np.arcsin(np.clip(LENGTH / 2 / utils.not_zero(ego_v) * heading_rate_command, -1, 1))
         steering_angle = np.arctan(2 * np.tan(slip_angle))
         steering_angle = np.clip(steering_angle, -MAX_STEERING_ANGLE, MAX_STEERING_ANGLE)
-
-        # 在特定条件下增加转向角度
-        if delta_y1 < 0 and ego_heading > 0:
-            steering_angle = 4 * steering_angle
-        if delta_y2 > 0 and ego_heading < 0:
-            steering_angle = 4 * steering_angle
-
-        # 限制转角变化率
-        if hasattr(self, 'previous_steering_angle'):
-            steering_angle_change = steering_angle - self.previous_steering_angle
-            if abs(steering_angle_change) > MAX_STEERING_RATE:
-                steering_angle = self.previous_steering_angle + np.sign(steering_angle_change) * MAX_STEERING_RATE
-
-        # 存储当前的转角用于下次计算
-        self.previous_steering_angle = steering_angle
-
-        # 更新当前车辆的转向角度
         self.s_ego_mobil = float(steering_angle)
-
-        # 打印调试信息
-        # print(delta_y1, delta_y2, ego_heading, self.s_ego_mobil, target_lane_index)
-
         return float(steering_angle)
-
-
 
 
 class MultiAgentWrapper(Wrapper):
