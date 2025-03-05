@@ -275,7 +275,7 @@ class AbstractEnv(gym.Env):
             self.history.clear()
             for _ in range(self.config['history_len']): # LYZ-history重复15次
                 self.history.append(obs)
-            print(" History !!! ")
+            # print(" History !!! ")
             # 如果已经保存了5帧数据，可以将它们作为当前的obs
             # obs = np.array(list(self.history))
             indices = np.linspace(0, self.config["history_len"] - 1, self.config["num_samples"], dtype=int)
