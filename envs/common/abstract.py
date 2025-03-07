@@ -134,8 +134,8 @@ class AbstractEnv(gym.Env):
             "offscreen_rendering": os.environ.get("OFFSCREEN_RENDERING", "0") == "1",
             "manual_control": False,
             "real_time_rendering": False,
-            # "use_history": False,
-            "use_history": True,
+            "use_history": False,
+            # "use_history": True,
             "history_len": 15,
             "num_samples": 3
         }
@@ -275,11 +275,11 @@ class AbstractEnv(gym.Env):
             self.history.clear()
             for _ in range(self.config['history_len']): # LYZ-history重复15次
                 self.history.append(obs)
-            print(" History !!! ")
+            # print(" History !!! ")
             # 如果已经保存了5帧数据，可以将它们作为当前的obs
             # obs = np.array(list(self.history))
             indices = np.linspace(0, self.config["history_len"] - 1, self.config["num_samples"], dtype=int)
-            obs = np.array([self.history[i] for i in indices]).ravel()  # 形状 (3, 30)
+            obs = np.array([self.history[i] for i in indices]).ravel()  # 形状 (90,)
         if self.render_mode == 'human':
             self.render()
         return obs, info
