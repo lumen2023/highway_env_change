@@ -43,7 +43,7 @@ class HighwayEnv(AbstractEnv):
             "high_speed_reward": 1,  # 高速行驶时获得的奖励
             "lane_change_reward": 0,  # 每次变道时获得的奖励
             # "risk_reward": 0,  # 风险奖励
-            "risk_reward": -0.05,  # 风险奖励
+            "risk_reward": -0.5,  # 风险奖励
             "comfort_reward": 0,  # 舒适性奖励
             "reward_speed_range": [20, 30],  # 奖励速度范围
             "normalize_reward": True,  # 是否归一化奖励
@@ -281,7 +281,7 @@ class SafeHighwayEnvFast(HighwayEnv):
                 "steering_range": [-0.1, 0.1]  # 转向角范围设置为 -0.1 到 0.1
             },
             "simulation_frequency": 25,  # 仿真频率设置为 25 Hz，降低计算量
-            "policy_frequency": 5,  # 策略执行频率设置为 5 Hz
+            "policy_frequency": 10,  # 策略执行频率设置为 5 Hz
             "lanes_count": 4,  # 车道数量设置为 4 条
             "vehicles_count": 20,  # 场景中车辆的总数量设置为 20 辆
             "duration": 20,  # 每个 episode 的持续时间设置为 20 秒

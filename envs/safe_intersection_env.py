@@ -50,7 +50,7 @@ class safeIntersectionEnv(AbstractEnv):
             "simulation_frequency": 25,  # 仿真频率设置为 25 Hz，降低计算量
             "policy_frequency": 5,  # 策略执行频率设置为 5 Hz
             "duration": 20,  # 场景持续时间 [s]
-            "lanes_per_direction": 1,  # 每条道路车道数
+            "lanes_per_direction": 2,  # 每条道路车道数
             # "destination": "ir0",  # 目标位置
             "destination": "o1",  # 目标位置
             "controlled_vehicles": 1,  # 被控车辆数量

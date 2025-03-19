@@ -20,34 +20,53 @@ class EnvViewer(object):
     agent_display = None
 
     def __init__(self, env: 'AbstractEnv', config: Optional[dict] = None) -> None:
+        """
+        初始化环境渲染器。
+
+        参数：
+        - env (`AbstractEnv`): 需要渲染的环境对象。
+        - config (`Optional[dict]`): 可选的配置字典，如果未提供，则使用 `env.config`。
+        """
         self.env = env
-        self.config = config or env.config
-        self.offscreen = self.config["offscreen_rendering"]
-        self.observer_vehicle = None
-        self.agent_surface = None
-        self.vehicle_trajectory = None
-        self.frame = 0
-        self.directory = None
-
+        self.config = config or env.config  # 使用传入的配置，否则使用环境默认配置
+        self.offscreen = self.config["offscreen_rendering"]  # 是否启用离屏渲染（不打开窗口，仅获取图像）
+        self.observer_vehicle = None  # 观察车辆（跟随的主车辆）
+        self.agent_surface = None  # 代理（智能体）可视化的表面
+        self.vehicle_trajectory = None  # 车辆轨迹（用于绘制历史轨迹）
+        self.frame = 0  # 记录渲染的帧数
+        self.directory = None  # 可用于存储渲染输出
+        
+        
+        # 初始化 pygame
         pygame.init()
-        pygame.display.set_caption("Highway-env")
-        panel_size = (self.config["screen_width"], self.config["screen_height"])
+        pygame.display.set_caption("Highway-env")  # 设置窗口标题
+        panel_size = (self.config["screen_width"], self.config["screen_height"])  # 设定窗口尺寸
 
-        # A display is not mandatory to draw things. Ignoring the display.set_mode()
-        # instruction allows the drawing to be done on surfaces without
-        # handling a screen display, useful for e.g. cloud computing
+        # 说明：
+        # 在某些云计算环境或无图形界面的服务器上，我们可能不希望创建窗口。
+        # 这里如果 `offscreen` 为 False，则创建一个窗口，否则不创建。
+        if self.env.render_mode == "rgb_array":
+            self.offscreen = True
         if not self.offscreen:
-            self.screen = pygame.display.set_mode([self.config["screen_width"], self.config["screen_height"]])
+            self.screen = pygame.display.set_mode([self.config["screen_width"], self.config["screen_height"]])  # 创建显示窗口
+
+        # 如果 `agent_display` 设为 True，则扩展显示区域
         if self.agent_display:
             self.extend_display()
-        self.sim_surface = WorldSurface(panel_size, 0, pygame.Surface(panel_size))
-        self.sim_surface.scaling = self.config.get("scaling", self.sim_surface.INITIAL_SCALING)
-        self.sim_surface.centering_position = self.config.get("centering_position", self.sim_surface.INITIAL_CENTERING)
-        self.clock = pygame.time.Clock()
 
-        self.enabled = True
+        # 创建模拟表面 `sim_surface`，用于绘制环境
+        self.sim_surface = WorldSurface(panel_size, 0, pygame.Surface(panel_size))
+        self.sim_surface.scaling = self.config.get("scaling", self.sim_surface.INITIAL_SCALING)  # 获取缩放比例
+        self.sim_surface.centering_position = self.config.get("centering_position",
+                                                              self.sim_surface.INITIAL_CENTERING)  # 获取居中位置
+        self.clock = pygame.time.Clock()  # 初始化时钟，用于控制帧率
+
+        self.enabled = True  # 标记渲染是否启用
+
+        # 检查是否在无图形界面的环境（如云计算服务器）运行
+        # `SDL_VIDEODRIVER=dummy` 表示使用虚拟驱动，不进行实际渲染
         if os.environ.get("SDL_VIDEODRIVER", None) == "dummy":
-            self.enabled = False
+            self.enabled = False  # 关闭渲染
 
     def set_agent_display(self, agent_display: Callable) -> None:
         """
@@ -142,12 +161,19 @@ class EnvViewer(object):
 
     def get_image(self) -> np.ndarray:
         """
-        The rendered image as a rgb array.
-
-        Gymnasium's channel convention is H x W x C
+        返回渲染后的图像，以RGB数组形式表示。
+    
+        Gymnasium的通道约定是H x W x C。
+        
+        此函数根据当前的渲染配置获取图像数据，并确保图像数据的格式符合Gymnasium的要求。
         """
+        # 根据配置决定使用哪个表面进行渲染
         surface = self.screen if self.config["render_agent"] and not self.offscreen else self.sim_surface
-        data = pygame.surfarray.array3d(surface)  # in W x H x C channel convention
+        
+        # 使用pygame的surfarray模块获取表面的RGB数据，数据格式为W x H x C
+        data = pygame.surfarray.array3d(surface)
+        
+        # 由于Gymnasium的通道约定是H x W x C，因此需要对数据进行转置
         return np.moveaxis(data, 0, 1)
 
     def window_position(self) -> np.ndarray:
